@@ -1,0 +1,28 @@
+#!/usr/bin/zsh
+
+###### Imports ZSH history file into DBHIST Database
+
+
+local -A ccounts
+local -a daterefs
+
+
+function read_history_basic
+{
+	while read line
+	do
+		#echo "${line}"
+		local timestamp=$(echo "${line}" | awk '-F:' '{print $2}'|awk '{print $1}')
+		#local command=$(echo "${line}" | awk '-F;' '{print $2}' | awk '{print $1}')
+		local fullcommand=$(echo "${line}" | awk '-F;' '{print $2}' )
+
+		echo "\n\nzshhistoryinsert \"${1}\" \"${HOSTNAME}\" \"1600000000\" \"${SHELL}\" \"$(whoami)\"  \"$(date --date=@${timestamp} '+%Y%m%d%H%M%S')\" \"${SHELL}\" \"${fullcommand}\""
+		##NOTE the use of "/no/path/for/imported/history" here for working directory will be wrong, but the zsh history file does not include this information
+		dbhistinsert "${1}" "${HOSTNAME}" "1600000000" "${SHELL}" "$(whoami)" "$(date --date=@${timestamp} '+%Y%m%d%H%M%S')"  "${fullcommand}" "${fullcommand}" "/no/path/for/imported/history"
+	done < "${HISTFILE}"
+}
+
+
+read_history_basic "${1}"
+
+

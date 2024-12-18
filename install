@@ -1,0 +1,313 @@
+#!/usr/bin/env zsh
+
+##
+##	Installs the DBHIST package
+
+function usage()
+{
+	echo "	Usage:"
+	echo "		install [options] "
+	echo "	Options:"
+	echo "		At least one of the following:"
+	echo "			-u	Update (default)"
+	echo "				Will update an existing installation. It will not"
+	echo "				create new, empty history database, nor will your"
+	echo "				dot files be modified (.zshrc, .bashrc, etc.)."
+	echo "			-n	New Install."
+	echo "				This will install a new, empty history databsase, and"
+	echo "				modify the dot files for zsh, bash and fish, if found."
+	echo "			-nn New Install, it will create a new, empty database,"
+	echo "				but will NOT modify a any dot files."
+	echo "		Other options:"
+	echo "			-z <alternate path to your .zshrc>"
+	echo "				Defaults to \$ZDOTDIR/.zshrc or ~/.zshrc if either"
+	echo "				of those files already exists (the \$ZDOTDIR file "
+	echo "				is used preferentially)."
+	echo "			-b <alternate path to your .bashrc>"
+	echo "				Defaults to ~/.bashrc if that file already exists."
+	echo "			-f <alternate path to your config.fish>"
+	echo "				Defaults to ~/.config/fish/config.fish if that file"
+	echo "				already exists."
+	echo "			-e <path>"
+	echo "				Where <path> is a directory on your path into which"
+	echo "				the dbhist executables will be placed. Defaults to"
+	echo "				~/bin. This must be a directory that exists and is"
+	echo "				writable and must already be on your \$PATH."
+	echo "			-d <file>"
+	echo "				Where <file> is the fully qualified path where you"
+	echo "				want your dbhist sqlite3 database to be. Defaults "
+	echo "				to \$DBHISTFILE if already defined, or ~/.dbhist if"
+	echo "				not. This will be exposed as \$DBHISTFILE"
+	echo "			-h"
+	echo "				Prints this usage and exits."
+	exit -2
+}
+function error
+{
+	echo "[38;5;1m${1}[38;5;15m" >&2
+	exit -1
+}
+
+shebang="#!$(command which python)"
+
+
+rootpath="${0:P:h}"
+dbinit="${rootpath}/dbinit"
+BIN=~/bin
+if [[ ! -n "${DBHISTFILE}" ]]
+then
+	DBHISTFILE=~/.dbhist
+fi
+ZSHRC="${HOME}/.zshrc"
+if [[ -n "$ZDOTDIR" ]]
+then
+	ZSHRC="${ZDOTDIR}/.zshrc"
+fi
+if [[ ! -e "${ZSHRC:P}" ]]
+then
+	ZSHRC=
+else
+	ZDOTDIR=${ZSHRC:P:h}
+fi
+
+
+BASHRC="${HOME}/.bashrc"
+if [[ ! -e "${BASHRC:P}" ]]
+then
+	BASHRC=
+else
+	BDOTDIR=${BASHRC:P:h}
+fi
+
+
+FISHRC="${HOME}/.config/fish/config.fish"
+if [[ ! -e "${FISHRC:P}" ]]
+then
+	FISHRC=
+else
+	FDOTDIR="${HOME}/.config/fish"
+fi
+
+INSTALLTYPE=UPDATE
+INSTALLMSG="Updating"
+
+##echo "ZSHRC=${ZSHRC}"
+##echo "BASHRC=${BASHRC}"
+##echo "FISHRC=${FISHRC}"
+##exit
+
+if [[ "$#" == 0 ]]
+then
+	usage
+fi
+
+
+while [[ "$1" ]]
+do
+	case "$1" in
+		"-u")
+			INSTALLTYPE=UPDATE
+			INSTALLMSG="Updating"
+			;;
+		"-n")
+			INSTALLTYPE=NEWFULL
+			INSTALLMSG="Installing"
+			;;
+		"-nn")
+			INSTALLTYPE=NEWSAFE
+			INSTALLMSG="Installing"
+			;;
+		"-z")
+			shift
+			if [[ -e "${1}" ]]
+			then
+				if [[ -w "${1}" ]]
+				then
+					ZSHRC="${1}"
+					ZDOTDIR=${ZSHRC:P:h}
+				else
+					if [[ "${INSTALLTYPE}" =~ "^NEW" ]]
+					then
+						error "Zshrc source file \"${1}\" is not writable."
+					fi
+				fi
+			else
+				error "Zshrc source file \"${1}\" does not exist."
+			fi
+			;;
+		"-b")
+			shift
+			if [[ -e "${1}" ]]
+			then
+				if [[ -w "${1}" ]]
+				then
+					BASHRC="${1}"
+					BDOTDIR="${BASHRC:P:h}"
+				else
+					if [[ "${INSTALLTYPE}" =~ "^NEW" ]]
+					then
+						error "Bashrc source file \"${1}\" is not writable."
+					fi
+				fi
+			else
+				error "Bashrc source file \"${1}\" does not exist."
+			fi			
+			;;
+		"-f")
+			shift
+			if [[ -e "${1}" ]]
+			then
+				if [[ -w "${1}" ]]
+				then
+					FISHRC="${1}"
+					FDOTDIR="${FISHRC:P:h}"
+				else
+					if [[ "${INSTALLTYPE}" =~ "^NEW" ]]
+					then
+						error "Fishrc source file \"${1}\" is not writable."
+					fi
+				fi
+			else
+				error "Fishrc source file \"${1}\" does not exist."
+			fi			
+			;;
+		"-e")
+			shift
+			if [[ -e "${1}" ]]
+			then
+				if [[ -d "${1}" ]]
+				then
+					if [[ -w "${1}" ]]
+					then
+						BIN="${1}"
+					else
+						error "Executables path \"${1}\" is not writable."
+					fi
+				else
+					error "Executables path  \"${1}\" is not a directory."
+				fi
+			else
+				error "Executables path  \"${1}\" does not exist."
+			fi			
+			;;
+		"-d")
+			shift
+			DBHISTFILE="${1}"
+			;;
+		"-h")
+			usage
+			;;
+		*)
+			usage
+			;;
+	esac
+	shift
+done
+
+
+if [[ "${INSTALLTYPE}" =~ "^NEW" ]]
+then
+	## new install which will create a new database
+	###### INITIALIZE THE DATABASE
+	###### INITIALIZE THE DATABASE
+	###### INITIALIZE THE DATABASE
+
+	if [[ -n "${DBHISTFILE}" ]]
+	then
+		echo "Initializing database \"${DBHISTFILE}\""
+		if [[ -e "${DBHISTFILE}" ]]
+		then
+			echo "Database \"${DBHISTFILE}\" already exists."
+		else
+			#echo "${dbinit} \"${DBHISTFILE}\"" 
+			${dbinit} "${DBHISTFILE}" 
+			if [[ -e "${DBHISTFILE}" ]]
+			then
+				echo "Created DBHISTFILE at \"${DBHISTFILE}\""
+			else
+				error "Failed to initialize database \"${DBHISTFILE}\""
+			fi
+		fi
+	else
+		error "No database file specified."
+	fi
+fi
+
+
+###### INSTALLING GLOBALS
+###### INSTALLING GLOBALS
+###### INSTALLING GLOBALS
+echo "${INSTALLMSG} dbhistinsert into \"${BIN}\""
+echo "${shebang}" > "${BIN}/dbhistinsert"
+cat "${rootpath}/dbhistinsert" >> "${BIN}/dbhistinsert"
+chmod 755 "${BIN}/dbhistinsert"
+
+echo "${INSTALLMSG} dbhist into \"${BIN}\""
+echo "${shebang}" > "${BIN}/dbhist"
+cat "${rootpath}/dbhist" >> "${BIN}/dbhist"
+chmod 755 "${BIN}/dbhist"
+
+if [[ -n "${ZSHRC}" ]]
+then
+	echo "${INSTALLMSG} for ZSH"
+	echo "${INSTALLMSG} dbhist.zsh file into \"$ZDOTDIR\" using database file ${DBHISTFILE}"
+	cat "${rootpath}/dbhist.zsh" | sed "s|DDDDDDDDDDDD|${DBHISTFILE}|g" > "${ZDOTDIR}/dbhist.zsh"
+fi
+
+if [[ -n "${BASHRC}" ]]
+then
+	echo "${INSTALLMSG} for BASH"
+	echo "${INSTALLMSG} dbhist.bash file into \"$BDOTDIR\" using database file ${DBHISTFILE}"
+	cat "${rootpath}/dbhist.bash" | sed "s|DDDDDDDDDDDD|${DBHISTFILE}|g" > "${BDOTDIR}/dbhist.bash"
+	cp "${rootpath}/dbhist.bash-preexec.sh" "${BDOTDIR}/"
+fi
+if [[ -n "${FISHRC}" ]]
+then
+	echo "${INSTALLMSG} for FISH"
+	echo "${INSTALLMSG} dbhist.fish file into \"$FDOTDIR\" using database file ${DBHISTFILE}"
+	cat "${rootpath}/dbhist.fish" | sed "s|DDDDDDDDDDDD|${DBHISTFILE}|g" > "${FDOTDIR}/dbhist.fish"
+fi
+
+## update dot files if necessary
+if [[ "${INSTALLTYPE}" == "NEWFULL" ]]
+then
+	# new full install including modifying dot files to load dbhist
+	###### INSTALLING FOR ZSH
+	if [[ -n "${ZSHRC}" ]]
+	then
+		echo "Adding source call to \"$ZSHRC\""
+		grep "source" "${ZSHRC}"| grep -q "dbhist.zsh"
+		if [[ $? -eq 0 ]]
+		then
+			echo "\tdbhist.zsh is already sourced in \"${ZSHRC}\""
+		else
+			echo "\n#Sourcing DBHIST\nsource ${ZDOTDIR}/dbhist.zsh\n" >> "${ZSHRC}"
+		fi
+	fi
+	###### INSTALLING FOR BASH
+	if [[ -n "${BASHRC}" ]]
+	then
+		echo "Adding source call to \"$BASHRC\""
+		grep "source" "${BASHRC}" | grep -q "dbhist.bash"
+		if [[ $? -eq 0 ]]
+		then
+			echo "\tsource call is already in \"${BASHRC}\""
+		else
+			echo "\n#Sourcing DBHIST\nsource ${BDOTDIR}/dbhist.bash-preexec.sh\nsource ${BDOTDIR}/dbhist.bash\n" >> "${BASHRC}"
+		fi
+	fi
+	###### INSTALLING FOR FISH
+	if [[ -n "${FISHRC}" ]]
+	then
+		echo "Adding source call to \"$FISHRC\""
+		grep "source" "${FISHRC}" | grep -q "dbhist.fish"
+		if [[ $? -eq 0 ]]
+		then
+			echo "\tsource call is already in \"${FISHRC}\""
+		else
+			echo "\n#Sourcing DBHIST\nsource ${FDOTDIR}/dbhist.fish\n" >> "${FISHRC}"
+		fi
+	fi
+fi
+
+

@@ -1,0 +1,16 @@
+#!zsh
+
+file=${1}
+if [[ ! -e "${file}" ]]
+then
+	sqlite3 "${file}" "create table history(hostname text, sessionid text, shell text, username text, commandtime real, year integer, month integer, day integer, dayofyear integer, weekofyear integer, dayofweek integer, command text, actualcommand text, pwd text, parameters text, primary key(hostname, sessionid, shell, commandtime, command));" 
+	if [[ -e "${file}" ]]
+	then
+		echo "Created table history in sqlite3 database file \"${file}.\""
+	else
+		echo "Failed to create sqlite3 database file \"${file}.\""
+	fi
+else
+	echo "File \"${file}\" already exists."
+fi
+

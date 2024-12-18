@@ -1,0 +1,383 @@
+
+import argparse
+import sqlite3
+import sys
+import datetime
+import time
+import operator
+import os
+import subprocess
+import math
+
+VERBOSE=False
+
+def eprint(*args, **kwargs):
+	print(*args, file=sys.stderr, **kwargs)
+
+def vprint(*args, **kwargs):
+	if VERBOSE:
+		print(*args, **kwargs)
+
+def pad(stringToCheck, minLength):
+	padding=""
+	length=0
+	if stringToCheck is not None:
+		length=len(stringToCheck)
+	if minLength > length:
+		padding = " " * (minLength - length)
+	return padding
+
+def printSummaryRecord(record):
+	field=record[0]
+	if field is None:
+		field="<unknown>"
+	print(field+pad(field,25)+"\t",record[1])
+
+def printListRecord(record):
+	sep=''
+	for field in record:
+		if field is None:
+			field="<unknown>"
+		print(sep,end='')
+		#print(field+pad(field, 20),end='')
+		print(field,end='')
+		sep='	'
+	print('')
+
+def printZshExtendedRecord(record):
+	inDateTimeFormat='%Y%m%d%H%M%S'
+	outDateTimeFormat='%P'
+	dateparsed=datetime.datetime.strptime(record[4], inDateTimeFormat)
+	timeStamp = str(math.trunc(dateparsed.timestamp()))
+	print(': '+ timeStamp + ':0;' + record[5]+ " " + record[6])
+
+
+def select(database, query, numberToPrint, printFunction):
+	try:
+		con = sqlite3.connect("file:"+database+"?mode=ro", uri=True)
+		cursor = con.cursor()
+		#print("Connected to SQLite")
+		vprint("Query:\n"+query+"\n")
+		cursor.execute(query)
+		rows=cursor.fetchall()
+
+		count = numberToPrint
+		for row in rows:
+			if numberToPrint==0 or count > 0:
+				printFunction(row)
+				count-=1
+
+		cursor.close()
+
+	except sqlite3.Error as error:
+		eprint("SQLITE3 QUERY:\n"+query+"\n\nON DATABASE \"" + database +"\" FAILED.\n\nERROR:", error)
+	finally:
+		if con:
+			con.close()
+			#print("The SQLite connection is closed")
+
+## DBHIST mode options
+modeSummary=True
+modeList=False
+modeZshExtended=False
+
+#query the database
+selectBase = "select command, count(commandtime) as howmany from history "
+selectWhere = None
+selectWhereAnd = ""
+selectGroupBy = " group by command "
+selectOrderBy = " order by howmany "
+selectOrderByDir = "desc"
+timeClause = None
+userClause = None
+pathClause = None
+
+parser = argparse.ArgumentParser(description='Reads $DBHISTFILE sqlite3 database, and reports on the command history therein. Several options below will read environment variables for their defaults if the indicated environment variable is present. Dbhist queires an SQLITE3 database and is absolutely not SQL safe in its queries. Options and environment varables used can include SQL code themselves and these will affect the resulting queries run. As such, the database is opened Read-Only so mangled queries cannot delete or damage this database.')
+parser.add_argument("-f", help='Database file to read. Defaults to $DBHISTFILE')
+parser.add_argument('-n', help='Host name for which to restrict queries. Defaults to $HOSTNAME. Multiple hostnames can be provided in a comma separated list. If H is "*" then all host names will be matched.')
+parser.add_argument('-s', help='Shell program for which to restrict queries. Defaults to $SHELL. If S is "*", then commands for all shells will be shown. $SHELL will typically include the full path, so include the path when providing this option.')
+parser.add_argument('-c', type=int, help='Print only top C most frequently used commands. Any negative value will print the least frequently used commands, and a zero will print all commands. Defaults to 15.')
+parser.add_argument('-x', help='Exclude any commands in this comma separated list from all processing. Defaults to $DBHISTIGNORE.')
+parser.add_argument('-d', nargs='*', help='Show results only for commands on the specified date (if only one argument provided), or between the earliest and latest dates (inclusive) if more than one date is provided. Date format is "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS". If the time is omitted, it will default to 00:00:00. Alternately D can be one of TODAY, WEEK, MONTH, YEAR (case insensitive) which will correspond to today only, the past 7 days (including today), the past 30 days or the past 365 days respectively.')
+parser.add_argument('-u', help='Process only history for comma delimited list of users U. Defaults to current user name. If U is "*", then commands for all users will be shown. This is potentially very dangerous if the history database amongst different users, especially if root is included.')
+parser.add_argument('-p', nargs='*', help='Show results only for the current working directory, or, if directories are listed, only in the listed directories.')
+parser.add_argument("--shells", help="List the shells used rather than commands. Implies -s *", action="store_true")
+parser.add_argument("--hosts", help="List the hosts commands have been issued from rather than commands.", action="store_true")
+parser.add_argument("--users", help="List the user names commands have been issued by rather than commands. Implies -u *", action="store_true")
+parser.add_argument("--raw", help="Print the full history rather than summarization.", action="store_true")
+parser.add_argument("--commands", action="store", dest="commands", help="Process only for the commands in this comma delimited list.")
+parser.add_argument("--verbose", help="Print extra information when running.", action="store_true")
+parser.add_argument("--zshextended", help="Prints history in an extended zsh history file compatible format.", action="store_true")
+
+args = parser.parse_args()
+
+if args.verbose:
+	VERBOSE=True
+if args.raw:
+	modeList=True
+	modeSummary=False
+	selectBase="select hostname, sessionid, shell, username, commandtime, pwd, command, actualcommand, parameters from history "
+	selectOrderBy=" order by commandtime "
+	selectGroupBy = ""
+	
+if args.zshextended:
+	modeZshExtended=True
+	modeSummary=False
+	selectBase="select hostname, sessionid, shell, username, CAST(CAST(commandtime as int) as text) , command, parameters from history "
+	selectOrderBy=" order by commandtime "
+	selectOrderByDir = "asc"
+	selectGroupBy = ""
+
+if args.p is not None:
+	if len(args.p) == 0:
+		pwd = ( os.getcwd() ,)
+	else:
+		pwd = args.p
+	vprint("working direcories:" + str(len(pwd)))
+	vprint(pwd)
+	pathClause = " pwd in ("
+	sep = ""
+	for path in pwd:
+		pathClause = pathClause + sep + "'" + path + "'"
+		sep = ", "
+	pathClause = pathClause + ")"
+
+histfile=os.getenv('DBHISTFILE')
+if args.f is not None:
+	histfile=args.f
+
+if not os.path.exists(histfile):
+	eprint("History file \""+ histfile + "\" does not exist.")
+	exit(-1)
+
+userNames=(os.getlogin(),)
+if args.u is not None:
+	if args.u == '*':
+		userNames=None
+	else:
+		userNames=args.u.split(",")
+if userNames is not None:
+	userClause="username in ("
+	userClauseSep=""
+	for userName in userNames:
+		userClause=userClause+userClauseSep+"'"+userName+"'"
+		userClauseSep=", "
+	userClause=userClause+")"
+
+
+hostnames=(os.getenv('HOSTNAME'),)
+hostNamesClause=' hostname in ('
+if args.n is not None:
+	if args.n == "*":
+		hostnames=None
+		hostNamesClause=None
+	else:
+		hostnames=args.n.split(",")
+hostnamesep=""
+if hostnames is not None:
+	for hostname in hostnames:
+		hostNamesClause = hostNamesClause + hostnamesep + "'" + hostname + "'"
+		hostnamesep=","
+	hostNamesClause=hostNamesClause+")"
+#print("Hostnames clause:" + hostNamesClause)
+
+numberToPrint = 15
+if args.c is not None:
+	numberToPrint = args.c
+	if args.c < 0:
+		numberToPrint = abs(args.c)
+		selectOrderByDir = "asc"
+
+excludes = None
+excludeClause=None
+if args.x is not None:
+	excludes=args.x.split(',')
+else:
+	zignore=os.getenv('DBHISTIGNORE')
+	if zignore is not None:
+		excludes=zignore.split(',')
+if excludes is not None:
+	excludeClause=" command not in ("
+	excludeSep = ""
+	for exclude in excludes:
+		excludeClause = excludeClause + excludeSep + "'" + exclude + "'"
+		excludeSep = ","
+	excludeClause = excludeClause+ ")"
+
+if args.commands is not None:
+	cmds=args.commands.split(",")
+	if cmds is not None:
+		if excludeClause is None:
+			excludeClause=" command in ("
+		else:
+			excludeClause = excludeClause + ' and command in ('
+		excludeSep = ""
+		for cmd in cmds:
+			vprint("Command: \"" + cmd + "\"")
+			excludeClause = excludeClause + excludeSep + "'" + cmd + "'"
+			excludeSep = ","
+		excludeClause = excludeClause+ ")"
+
+
+shell=os.getenv('SHELL')
+shellClause=None
+if args.s is not None:
+	if args.s=="*":
+		shell=None
+	else:
+		shell=args.s
+if shell is not None:
+	shellClause=" shell in ('" + shell + "')"
+
+
+##### START DATE RANGES
+# Date ranges
+inDateTimeFormat='%Y-%m-%d %H:%M:%S'
+inDateTimeFormatShort='%Y-%m-%d'
+outDateTimeFormat='%Y%m%d%H%M%S'
+starttime= None
+starttimestamp=None
+endtime = None
+endtimestamp=None
+datespecials=('TODAY','WEEK','MONTH','YEAR')
+if args.d is not None:
+	#we have some dates
+	vprint("Dates....",args.d)
+	dc=0
+	for dateitem in args.d:
+		dc+=1
+		dateitemupper=dateitem.upper()
+		dateparsed=None
+		if dateitemupper in datespecials:
+			today=datetime.datetime.now()
+			starttime=datetime.datetime(today.year, today.month, today.day, 0,0,0,0)
+			endtime=datetime.datetime(today.year, today.month, today.day, 23,59,59,9999)
+			if dateitemupper == datespecials[0]:
+				vprint("Today Only")
+			elif dateitemupper == datespecials[1]:
+				vprint("Week Only")
+				delta = datetime.timedelta(days=6)
+				starttime=starttime-delta
+			elif dateitemupper == datespecials[2]:
+				vprint("Month Only")
+				delta = datetime.timedelta(days=30)
+				starttime=starttime-delta
+			elif dateitemupper == datespecials[3]:
+				vprint("Year Only")
+				delta = datetime.timedelta(days=364)
+				starttime=starttime-delta
+			starttimestamp=starttime.strftime(outDateTimeFormat)
+			endtimestamp=endtime.strftime(outDateTimeFormat)
+		else:
+			try:
+				dateparsed=datetime.datetime.strptime(dateitem, inDateTimeFormat)
+			except ValueError as ve:
+				try:
+					dateparsed=datetime.datetime.strptime(dateitem, inDateTimeFormatShort)
+				except ValueError as ve:
+				    eprint('Error parsing date "' + dateitem + '", ValueError Raised:', ve)
+				    exit(-22)
+			#try:
+			#	dateparsed=datetime.datetime.fromisoformat(dateitem)
+			#except ValueError as ve:
+			#	print('Error parsing date "' + dateitem + '", ValueError Raised:', ve)
+			#	exit(-22)
+			if starttime is None:
+				starttime=dateparsed
+				starttimestamp=starttime.strftime(outDateTimeFormat)
+			elif endtime is None:
+				endtime=dateparsed
+				endtimestamp=endtime.strftime(outDateTimeFormat)
+				if starttimestamp > endtimestamp:
+					endtime=starttime
+					endtimestamp=starttimestamp
+					starttime=dateparsed
+					starttimestamp=starttime.strftime(outDateTimeFormat)
+			else:
+				if dateparsed.strftime(outDateTimeFormat) < starttimestamp:
+					starttime=dateparsed
+					starttimestamp=starttime.strftime(outDateTimeFormat)
+				elif dateparsed.strftime(outDateTimeFormat) > endtimestamp:
+					endtime=dateparsed
+					endtimestamp=endtime.strftime(outDateTimeFormat)
+
+if starttime is not None and endtime is None:
+	# adjust start time to beginning of day and set end time to end of day
+	starttime=datetime.datetime(starttime.year, starttime.month, starttime.day,0,0,0,0)
+	endtime=datetime.datetime(starttime.year, starttime.month, starttime.day,23,59,59,999999)
+	starttimestamp=starttime.strftime(outDateTimeFormat)
+	endtimestamp=endtime.strftime(outDateTimeFormat)
+
+if starttimestamp is not None and endtimestamp is not None: 
+	vprint("Start Time:"+ starttimestamp)
+	vprint("End   Time:"+ endtimestamp)
+	timeClause="commandtime between " + starttimestamp + " and " + endtimestamp
+##### END DATE RANGES
+
+if args.shells:
+	selectBase = "select shell as command, count(commandtime) as howmany from history "
+	selectGroupBy = " group by shell "
+	shell=None
+	shellClause=None
+
+if args.hosts:
+	selectBase = "select hostname as command, count(commandtime) as howmany from history "
+	selectGroupBy = " group by hostname "
+
+if args.users:
+	selectBase = "select username as command, count(commandtime) as howmany from history "
+	selectGroupBy = " group by username "
+	userClause=None
+
+
+
+selectQuery = selectBase 
+if hostNamesClause is not None:
+	if selectWhere is None:
+		selectWhere = " where "
+	selectQuery = selectQuery + selectWhere + selectWhereAnd + hostNamesClause
+	selectWhere=""
+	selectWhereAnd = " and "
+if excludeClause is not None:
+	if selectWhere is None:
+		selectWhere = " where "
+	selectQuery = selectQuery + selectWhere + selectWhereAnd + excludeClause
+	selectWhere = ""
+	selectWhereAnd = " and "
+if shellClause is not None:
+	if selectWhere is None:
+		selectWhere = " where "
+	selectQuery = selectQuery + selectWhere + selectWhereAnd + shellClause
+	selectWhere = ""
+	selectWhereAnd = " and "
+if timeClause is not None:
+	if selectWhere is None:
+		selectWhere = " where "
+	selectQuery = selectQuery + selectWhere + selectWhereAnd + timeClause
+	selectWhere = ""
+	selectWhereAnd = " and "
+if userClause is not None:
+	if selectWhere is None:
+		selectWhere = " where "
+	selectQuery = selectQuery + selectWhere + selectWhereAnd + userClause
+	selectWhere = ""
+	selectWhereAnd = " and "
+if pathClause is not None:
+	if selectWhere is None:
+		selectWhere = " where "
+	selectQuery = selectQuery + selectWhere + selectWhereAnd + pathClause
+	selectWhere = ""
+	selectWhereAnd = " and "
+
+selectQuery = selectQuery + selectGroupBy + selectOrderBy + selectOrderByDir
+
+if modeSummary:
+	select (histfile, selectQuery, numberToPrint, printSummaryRecord)
+elif modeZshExtended:
+	print("ZSH EXTENDED")
+	select (histfile, selectQuery, numberToPrint, printZshExtendedRecord)
+elif modeList:
+	select (histfile, selectQuery, numberToPrint, printListRecord)
+
+#eprint("Select Query:\n")
+#eprint(selectQuery)

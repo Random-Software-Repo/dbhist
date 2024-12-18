@@ -1,0 +1,74 @@
+
+import argparse
+import sqlite3
+import datetime
+import sys
+
+def eprint(*args, **kwargs):
+	print(*args, file=sys.stderr, **kwargs)
+
+def insert(database, hostname, sessionid, shell, username, dtime, command, actualcommand, pwd, params):
+	if command != "":
+		try:
+			con = sqlite3.connect(database)
+			cursor = con.cursor()
+			#print("Connected to SQLite")
+
+			dt=datetime.datetime.strptime(dtime, "%Y%m%d%H%M%S")
+			dsec=dt.strftime('%s')
+			year=dt.strftime('%Y')
+			month=dt.strftime('%m')
+			day=dt.strftime('%d')
+			dayofyear=dt.strftime('%j')
+			weekofyear=dt.strftime('%W')
+			dayofweek=dt.strftime('%w')
+
+			insertQuery = """INSERT INTO 
+							  history (hostname, sessionid, shell, username, commandtime, year, month, day, dayofyear, weekofyear, dayofweek, command, actualcommand, pwd, parameters)
+							  VALUES (?, ?, ?, ?, ?, ?, ?, ?,?, ?, ?, ?, ?, ?, ? );"""
+
+			data_tuple = (hostname, sessionid, shell, username, dtime, year, month, day, dayofyear, weekofyear, dayofweek, command, actualcommand, pwd, params)
+			cursor.execute(insertQuery, data_tuple)
+			con.commit()
+
+			cursor.close()
+
+		except sqlite3.Error as error:
+			eprint("DBHISTINSERT Error adding to history:", error)
+			eprint("\tDatabase:"+database)
+			eprint("\thostname:"+hostname)
+			eprint("\t:sessionid:"+sessionid)
+			eprint("\t:shell:"+ shell)
+			eprint("\t:username:"+ username)
+			eprint("\t:dtime:"+ dtime)
+			eprint("\t:command:\""+ command+"\"")
+			eprint("\t:actualcommand:\""+ actualcommand+"\"")
+			eprint("\t:pwd:\""+pwd+"\"")
+			eprint("\t:params:"+ params)
+		finally:
+			if con:
+				con.close()
+				#print("The SQLite connection is closed")
+
+
+parser = argparse.ArgumentParser(description='Inserts a record into a sqlite3 history database. This history may be shared among multiple sessions of a single shell (e.g. zsh) on a single computer, or multiple sessions of multiple shells on multiple computers. The following arguments are all required. There are no defaults. Each argument must be explicitely specified.')
+parser.add_argument("databasefile", help='Use this sqlite database.') 
+parser.add_argument("hostname", help="Host name on which the command was executed. Should be the fully qualified domain name, or anything else unique enough to distinguish unique hosts sharing this database.")
+parser.add_argument("sessionid", help="Globally unique session id used to distinguish different shell sessions of which many may be running simultaneously.")
+parser.add_argument("shell", help="Shell command was run from (e.g. zsh, bash, fish, tcsh, ksh, etc.).")
+parser.add_argument("username", help="The user who ran the command.")
+parser.add_argument("datetime", help="Date and time the command was executed. Must be in the format \"YYYYMMDDHHMMSS\".")
+parser.add_argument("typedcommand", help = "Command as typed in the shell including arguments.")
+parser.add_argument("actualcommand", help = "Command after alias expansion if known. If not known, repeat typedcommand.")
+parser.add_argument("pwd", help = "Working directory command was issued in.")
+args = parser.parse_args()
+
+typedcommand=args.typedcommand.split(' ', 1)
+actualcommand=args.actualcommand.split(' ', 1)
+
+params=''
+if len(typedcommand) > 1:
+	params= typedcommand[1]
+
+insert(args.databasefile, args.hostname, args.sessionid, args.shell, args.username, args.datetime, typedcommand[0], actualcommand[0], args.pwd, params)
+
