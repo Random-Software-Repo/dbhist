@@ -54,10 +54,7 @@ shebang="#!$(command which python)"
 rootpath="${0:P:h}"
 dbinit="${rootpath}/dbinit"
 BIN=~/bin
-if [[ ! -n "${DBHISTFILE}" ]]
-then
-	DBHISTFILE=~/.dbhist
-fi
+DBHISTFILE="${HOME}/.dbhist"
 ZSHRC="${HOME}/.zshrc"
 if [[ -n "$ZDOTDIR" ]]
 then
